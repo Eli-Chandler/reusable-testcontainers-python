@@ -170,6 +170,11 @@ class DockerContainer:
         self._kwargs = kwargs
         return self
 
+    def with_reuse(self, enable_reuse: bool = True, reuse_key: Optional[str] = None) -> Self:
+        self._reuse = enable_reuse
+        self._reuse_key = reuse_key
+        return self
+
     def maybe_emulate_amd64(self) -> Self:
         if is_arm():
             return self.with_kwargs(platform="linux/amd64")
