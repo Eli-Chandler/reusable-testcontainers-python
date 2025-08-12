@@ -1,4 +1,7 @@
 import contextlib
+import hashlib
+import json
+import logging
 from os import PathLike
 from socket import socket
 from types import TracebackType
@@ -71,6 +74,8 @@ class DockerContainer:
         network: Optional[Network] = None,
         network_aliases: Optional[list[str]] = None,
         _wait_strategy: Optional[WaitStrategy] = None,
+        reuse: bool = False,
+        reuse_key: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
         self.env = env or {}
@@ -99,6 +104,8 @@ class DockerContainer:
 
         self._kwargs = kwargs
         self._wait_strategy: Optional[WaitStrategy] = _wait_strategy
+        self._reuse: bool = reuse
+        self._reuse_key = reuse_key
 
     def with_env(self, key: str, value: str) -> Self:
         self.env[key] = value
@@ -192,22 +199,49 @@ class DockerContainer:
             else {}
         )
 
-        self._container = docker_client.run(
-            self.image,
-            command=self._command,
-            detach=True,
-            environment=self.env,
-            ports=cast("dict[int, Optional[int]]", self.ports),
-            name=self._name,
-            volumes=self.volumes,
-            **{**network_kwargs, **self._kwargs},
-        )
+        existing_container = None
+        reuse_key = self._compute_reuse_key()
+        if self._reuse:
+            try:
+                existing_container = docker_client.get_container_by_label("REUSE_KEY", reuse_key)
+            except RuntimeError:
+                logging.debug(f"No existing container found with key {reuse_key}")
+
+        if existing_container is not None:
+            self._container = existing_container
+        else:
+            self._container = docker_client.run(
+                self.image,
+                command=self._command,
+                detach=True,
+                environment=self.env,
+                ports=cast("dict[int, Optional[int]]", self.ports),
+                name=self._name,
+                volumes=self.volumes,
+                labels={"REUSE_KEY": reuse_key} if self._reuse else None,
+                **{**network_kwargs, **self._kwargs},
+            )
 
         if self._wait_strategy is not None:
             self._wait_strategy.wait_until_ready(self)
 
         logger.info("Container started: %s", self._container.short_id)
         return self
+
+    def _compute_reuse_key(self) -> str:
+        key_data = {
+            "image": self.image,
+            "command": self._command,
+            "env": dict(sorted(self.env.items())),
+            "ports": dict(sorted(self.ports.items())),
+            "volumes": {k: str(v) for k, v in sorted(self.volumes.items())},
+            "network": self._network.name if self._network else None,
+            "network_aliases": sorted(self._network_aliases or []),
+            "kwargs": dict(sorted(self._kwargs.items())),
+            "wait_strategy": repr(self._wait_strategy),
+        }
+        key_json = json.dumps(key_data, sort_keys=True)
+        return (self._reuse_key if self._reuse_key is not None else "") + hashlib.sha256(key_json.encode()).hexdigest()
 
     def stop(self, force: bool = True, delete_volume: bool = True) -> None:
         if self._container:

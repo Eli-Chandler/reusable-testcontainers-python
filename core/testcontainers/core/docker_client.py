@@ -179,6 +179,12 @@ class DockerClient:
             raise RuntimeError(f"Could not get container with id {container_id}")
         return cast("dict[str, Any]", containers[0])
 
+    def get_container_by_label(self, label_key: str, label_value: str) -> Container:
+        containers = self.client.containers.list(filters={"label": f"{label_key}={label_value}"})
+        if not containers:
+            raise RuntimeError(f"Could not get container with label {label_key}={label_value}")
+        return containers[0]
+
     def bridge_ip(self, container_id: str) -> str:
         """
         Get the bridge ip address for a container.
