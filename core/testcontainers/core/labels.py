@@ -31,5 +31,7 @@ def create_labels(image: str, labels: Optional[dict[str, str]]) -> dict[str, str
     if image == c.ryuk_image:
         return tc_labels
 
-    tc_labels[LABEL_SESSION_ID] = SESSION_ID
+    if "REUSE_KEY" not in labels:
+        # SESSION_ID is used for ryuk purge, if reuse enabled do not add session id to prevent purge
+        tc_labels[LABEL_SESSION_ID] = SESSION_ID
     return tc_labels
